@@ -1,0 +1,42 @@
+GENERAL:
+  EXP_NAME: IG-S-8
+  CHECKPOINT: ./checkpoints
+  LOG_DIR: ./log
+
+TRAIN:
+  LR: 1e-4
+  WEIGHT_DECAY: 0.00002
+  BATCH_SIZE: 32
+  EPOCH: 2000
+  STEP: 1000000
+  LOG_STEPS: 10
+  SAVE_STEPS: 20000
+  SAVE_EPOCH: 100
+  RESUME: #checkpoints/IG-S/8/model/epoch=99-step=17600.ckpt
+  NUM_WORKERS: 2
+  MODE: finetune
+  LAST_EPOCH: 0
+  LAST_ITER: 0
+
+# Inference-time prompt source.
+PROMPTS:
+  FILE: ./prompts.txt
+
+# Optional: use an OpenAI-compatible Chat Completions API to generate an interaction graph per prompt.
+# If disabled, falls back to the static INTER_GRAPH below.
+LLM:
+  ENABLED: true
+  BASE_URL: https://api.deepbricks.ai/v1/
+  API_KEY_ENV: OPENAI_API_KEY
+  MODEL: gpt-4o-mini
+  TEMPERATURE: 0.2
+  MAX_TOKENS: 800
+  TIMEOUT: 60
+  CACHE_FILE: ./results/llm_graph_cache.jsonl
+
+OUTPUT:
+  GRAPH_DIR: ./results/graphs
+
+INTER_GRAPH:
+  IN: [[1], [0], [0]]
+  OUT: [[1, 2], [0], []]
