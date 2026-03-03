@@ -30,6 +30,116 @@ def _strip_code_fences(s: str) -> str:
     return s.strip()
 
 
+def _clean_json_with_comments(s: str) -> str:
+    """
+    Remove JSON comments (// ...) and handle common JSON formatting issues.
+    JSON standard doesn't support comments, but LLMs sometimes add them.
+    """
+    lines = s.split('\n')
+    cleaned_lines = []
+    in_string = False
+    escape_next = False
+    
+    for line in lines:
+        cleaned_line = []
+        i = 0
+        while i < len(line):
+            char = line[i]
+            
+            # Track string boundaries (ignore // inside strings)
+            if escape_next:
+                cleaned_line.append(char)
+                escape_next = False
+                i += 1
+                continue
+            
+            if char == '\\':
+                cleaned_line.append(char)
+                escape_next = True
+                i += 1
+                continue
+            
+            if char == '"':
+                in_string = not in_string
+                cleaned_line.append(char)
+                i += 1
+                continue
+            
+            # If we see // outside a string, remove rest of line
+            if not in_string and i < len(line) - 1 and line[i:i+2] == '//':
+                break  # Skip rest of line
+            
+            cleaned_line.append(char)
+            i += 1
+        
+        cleaned_lines.append(''.join(cleaned_line))
+    
+    return '\n'.join(cleaned_lines)
+
+
+def _try_fix_truncated_json(s: str) -> str:
+    """
+    Attempt to fix truncated JSON by closing unclosed brackets/braces.
+    This is a best-effort repair for cases where LLM output was cut off.
+    """
+    s = s.rstrip()
+    if not s:
+        return s
+    
+    # Count unclosed brackets/braces
+    stack = []
+    in_string = False
+    escape_next = False
+    
+    for i, char in enumerate(s):
+        if escape_next:
+            escape_next = False
+            continue
+        
+        if char == '\\':
+            escape_next = True
+            continue
+        
+        if char == '"':
+            in_string = not in_string
+            continue
+        
+        if in_string:
+            continue
+        
+        if char in '[{':
+            stack.append(char)
+        elif char == ']':
+            if stack and stack[-1] == '[':
+                stack.pop()
+        elif char == '}':
+            if stack and stack[-1] == '{':
+                stack.pop()
+    
+    # Close remaining brackets/braces in reverse order
+    suffix = ''
+    while stack:
+        opener = stack.pop()
+        if opener == '[':
+            suffix += ']'
+        elif opener == '{':
+            suffix += '}'
+    
+    # If we're in the middle of a number/string, try to close it
+    last_char = s[-1] if s else ''
+    if last_char.isdigit() or last_char == '.':
+        # Likely truncated number, close the array/object first
+        pass
+    elif last_char == '"':
+        # String is closed, good
+        pass
+    elif last_char not in ']},"':
+        # Might be incomplete, but we'll try anyway
+        pass
+    
+    return s + suffix
+
+
 def _extract_json_obj(s: str) -> str:
     s = _strip_code_fences(s)
     
@@ -57,6 +167,9 @@ def _extract_json_obj(s: str) -> str:
     
     if json_str is None:
         raise ValueError(f"No JSON object found in LLM output. Content preview: {s[:500]}")
+    
+    # Clean comments before returning
+    json_str = _clean_json_with_comments(json_str)
     
     return json_str
 
@@ -308,14 +421,22 @@ Rules:
         extracted_json = _extract_json_obj(content)
         obj = json.loads(extracted_json)
     except (ValueError, json.JSONDecodeError) as e:
-        print(f"Error parsing JSON from LLM response:")
-        print(f"Raw content (first 1000 chars):\n{content[:1000]}")
+        # Try to fix truncated JSON
         try:
-            extracted = _extract_json_obj(content)
-            print(f"Extracted JSON (first 1000 chars):\n{extracted[:1000]}")
+            extracted_json = _extract_json_obj(content)
+            fixed_json = _try_fix_truncated_json(extracted_json)
+            obj = json.loads(fixed_json)
+            print(f"Warning: Fixed truncated JSON by closing brackets/braces")
         except Exception as e2:
-            print(f"Failed to extract JSON: {e2}")
-        raise ValueError(f"Failed to parse JSON from LLM output: {e}") from e
+            # If fixing failed, show detailed error
+            print(f"Error parsing JSON from LLM response:")
+            print(f"Raw content (first 1000 chars):\n{content[:1000]}")
+            try:
+                extracted = _extract_json_obj(content)
+                print(f"Extracted JSON (first 1000 chars):\n{extracted[:1000]}")
+            except Exception as e3:
+                print(f"Failed to extract JSON: {e3}")
+            raise ValueError(f"Failed to parse JSON from LLM output: {e}") from e
     
     graph = _validate_graph(obj)
     if cfg.cache_file:
