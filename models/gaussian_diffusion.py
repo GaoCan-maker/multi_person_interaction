@@ -1764,17 +1764,26 @@ class MotionDiffusion(GaussianDiffusion):
                                                size=model_kwargs['cond'].shape,
                                                device=model_kwargs['cond'].device)
 
-            in_cond = None
+            person_cond = None
             try:
-                in_cond = inter_graph.get("in_cond", None) if isinstance(inter_graph, dict) else None
+                person_cond = inter_graph.get("person_cond", None) if isinstance(inter_graph, dict) else None
             except Exception:
-                in_cond = None
+                person_cond = None
 
             for j in range(n_person):
                 with th.no_grad():
                     # If a character (e.g. Ch.1) conditions on more than one other character, denoising of each condition pair is performed individually and averaged in each timestep
                     # Each time we just sample one character
                     sample_average = []
+
+                    # Apply per-person text condition if available (stable across all edges of person j).
+                    if person_cond is not None:
+                        try:
+                            p_cond = person_cond[j]
+                            if p_cond is not None:
+                                model_kwargs["cond"] = p_cond
+                        except Exception:
+                            pass
 
                     # Allow "root" nodes with no incoming conditions.
                     # The network still expects a motion-condition 'b', so we provide a zero-motion placeholder.
@@ -1811,15 +1820,8 @@ class MotionDiffusion(GaussianDiffusion):
                         if inter_graph['out'][j] and (inter_graph['out'][j] != inter_graph['in'][j]):
                             out_unrelated_index = inter_graph['out'][j]  # Get out-unrelated nodes
 
-                        # Key change: during "traverse condition characters", use the edge-specific
-                        # text condition embedding if available.
-                        if in_cond is not None:
-                            try:
-                                edge_cond = in_cond[j][k]
-                                if edge_cond is not None:
-                                    model_kwargs["cond"] = edge_cond
-                            except Exception:
-                                pass
+                        # Per-person text condition is already applied above (before the edge loop),
+                        # so model_kwargs["cond"] stays stable for all edges of person j.
 
                         model_kwargs['b'] = imgs[cond_index] # Condition from last time step
                         sampling_info['unrelated'] = []

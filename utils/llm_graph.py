@@ -65,7 +65,7 @@ def _validate_graph(obj: Dict[str, Any]) -> Dict[str, Any]:
     n = int(obj.get("n_person"))
     g_in = obj.get("in")
     g_out = obj.get("out", None)
-    in_text = obj.get("in_text")
+    person_text = obj.get("person_text")
     pair_dists = obj.get("pair_dists", None)
 
     if n < 2:
@@ -75,15 +75,13 @@ def _validate_graph(obj: Dict[str, Any]) -> Dict[str, Any]:
     # 'out' is optional; if missing/invalid we will derive it from 'in' to keep the graph consistent.
     if g_out is not None and not (isinstance(g_out, list) and len(g_out) == n):
         g_out = None
-    if not (isinstance(in_text, list) and len(in_text) == n):
-        raise ValueError("'in_text' must be a list of length n_person")
+    if not (isinstance(person_text, list) and len(person_text) == n):
+        raise ValueError("'person_text' must be a list of length n_person")
 
     for j in range(n):
         # Allow empty in[j] (a "root" node). The sampling loop will fall back to a dummy motion-condition.
         if not isinstance(g_in[j], list):
             raise ValueError(f"in[{j}] must be a list")
-        if not isinstance(in_text[j], list) or len(in_text[j]) != len(g_in[j]):
-            raise ValueError(f"in_text[{j}] length must match in[{j}]")
         for idx in g_in[j]:
             if not isinstance(idx, int):
                 raise ValueError("All indices in 'in' must be int")
@@ -93,9 +91,8 @@ def _validate_graph(obj: Dict[str, Any]) -> Dict[str, Any]:
                 # Self-conditioning makes the current code behave oddly (b = imgs[j]).
                 # Disallow by default to keep semantics clear.
                 raise ValueError("Self edges are not allowed (idx == j)")
-        for s in in_text[j]:
-            if not isinstance(s, str) or not s.strip():
-                raise ValueError("Each edge description must be a non-empty string")
+        if not isinstance(person_text[j], str) or not person_text[j].strip():
+            raise ValueError(f"person_text[{j}] must be a non-empty string")
 
     def _normalize_pair_dists(
         raw: Any, n_: int, g_in_: List[List[int]]
@@ -196,7 +193,7 @@ def _validate_graph(obj: Dict[str, Any]) -> Dict[str, Any]:
             out_fixed[src] = sorted(set(out_fixed[src]).union(set(derived[src])))
 
     pair_dists_fixed = _normalize_pair_dists(pair_dists, n, g_in)
-    return {"n_person": n, "in": g_in, "out": out_fixed, "in_text": in_text, "pair_dists": pair_dists_fixed}
+    return {"n_person": n, "in": g_in, "out": out_fixed, "person_text": person_text, "pair_dists": pair_dists_fixed}
 
 
 def _cache_lookup(cache_file: str, prompt: str) -> Optional[Dict[str, Any]]:
@@ -230,10 +227,10 @@ def generate_interaction_graph(prompt: str, cfg: LLMGraphConfig) -> Dict[str, An
       {
         "in": List[List[int]],
         "out": List[List[int]],
-        "in_text": List[List[str]],
+        "person_text": List[str],              # [j] = action description for person j
         "pair_dists": List[List[List[float]]],  # [i][j] = [d_min, d_max]
       }
-    where in_text[j][k] describes edge (in[j][k] -> j).
+    where person_text[j] describes what person j does in the scene.
     """
     if cfg.cache_file:
         cached = _cache_lookup(cfg.cache_file, prompt)
@@ -255,7 +252,7 @@ Create an interaction graph in the following JSON schema:
   "n_person": <int, >=2>,
   "in": <list[list[int]] length n_person>,
   "out": <list[list[int]] length n_person>,
-  "in_text": <list[list[str]] length n_person>,
+  "person_text": <list[str] length n_person>,
   "pair_dists": <list[list[list[float,float]]], shape n_person x n_person>
 }}
 
@@ -267,12 +264,14 @@ Rules:
   - These are NOT required to be identical; they describe opposite directions.
 - in[j] must not include j itself. out[j] must not include j itself.
 - You may use an empty list for in[j] if person j does not depend on any other person.
-- in_text[j] must have the same length as in[j].
-- Each in_text[j][k] is ONE sentence describing how person i=in[j][k] affects/conditions person j in this scene.
-  This sentence will be used as the text condition when sampling person j given person i.
-- Keep sentences concise and concrete (actions, timing, spatial relation), avoid meta language.
 - Consistency requirement: for every edge i -> j that appears in in[j], j must also appear in out[i].
-- Action diversity: While staying faithful to the scene description, maximize the diversity of actions across different people and edges. Each person should have distinct, varied actions to avoid repetitive or similar motion descriptions.
+- person_text[j] is ONE sentence describing what person j does in the entire scene.
+  This sentence will be used as the text condition when generating person j's motion.
+  Guidelines for person_text:
+    - Describe person j's concrete physical actions (body movement, posture, direction, speed).
+    - You may reference other persons by index (e.g. "reaches toward Person 0") to preserve relational context.
+    - Keep it concise (1-2 sentences), motion-focused, and avoid abstract or meta language.
+    - Each person must have a DISTINCT, UNIQUE action description to maximize motion diversity.
 - pair_dists requirements:
   - pair_dists[i][j] gives a reasonable root-distance range [d_min, d_max] between person i and person j for this scene.
   - Use meters. Ensure 0 <= d_min <= d_max.

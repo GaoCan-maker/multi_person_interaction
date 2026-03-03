@@ -93,13 +93,19 @@ class LitGenModel(LightningModule):
 
         if not os.path.exists("results"):
             os.makedirs("results")
-        result_path = f"results/{name}.mp4"
         save_path = f'results/{name}_{num_p}p.npy'
         np.save(save_path, joints3d)
 
-        self.plot_multi(joints3d,
-                      result_path,
-                      batch["prompt"])
+        # Save the full 262-dim de-normalised features for embedding-based evaluation.
+        # Shape: (person_num, T, 262).  Load with np.load(feat_path) when computing
+        # embedding-based metrics with EvaluatorModelWrapper.
+        feat_path = f'results/{name}_{num_p}p_feat.npy'
+        np.save(feat_path, motion_output)
+
+        # MP4 visualisation is skipped during batch evaluation to save time.
+        # Uncomment the two lines below to re-enable video rendering:
+        # result_path = f"results/{name}.mp4"
+        # self.plot_multi(joints3d, result_path, batch["prompt"])
 
     def generate_loop(self, batch, window_size):
         prompt = batch["prompt"]
@@ -205,7 +211,7 @@ if __name__ == '__main__':
             inter_graph = {
                 "in": g["in"],
                 "out": g["out"],
-                "in_text": g["in_text"],
+                "person_text": g["person_text"],
                 "pair_dists": g.get("pair_dists", None),
             }
         else:
@@ -214,10 +220,11 @@ if __name__ == '__main__':
             inter_graph = {
                 "in": inter_graph_in,
                 "out": inter_graph_out,
+                "person_text": getattr(infer_cfg.INTER_GRAPH, "PERSON_TEXT", None),
                 "pair_dists": getattr(infer_cfg.INTER_GRAPH, "PAIR_DISTS", None),
             }
 
-        # Save graph+edge descriptions for inspection/repro.
+        # Save graph + per-person descriptions for inspection/repro.
         with open(os.path.join(graph_dir, f"{name}_graph.json"), "w", encoding="utf-8") as wf:
             json.dump(
                 {
@@ -225,7 +232,7 @@ if __name__ == '__main__':
                     "inter_graph": {
                         "in": inter_graph["in"],
                         "out": inter_graph["out"],
-                        "in_text": inter_graph.get("in_text", None),
+                        "person_text": inter_graph.get("person_text", None),
                         "pair_dists": inter_graph.get("pair_dists", None),
                     },
                 },

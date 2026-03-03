@@ -86,32 +86,21 @@ class InterGen(nn.Module):
         cond = out[torch.arange(x.shape[0]), text.argmax(dim=-1)]
         batch["cond"] = cond
 
-        # Optional: per-edge text conditions for multi-person sampling.
-        # If batch["inter_graph"]["in_text"] exists, encode those edge descriptions and attach them
-        # as inter_graph["in_cond"], aligned with inter_graph["in"] (same nested list structure).
+        # Optional: per-person text conditions for multi-person sampling.
+        # If batch["inter_graph"]["person_text"] exists, encode each person's action description
+        # and attach as inter_graph["person_cond"] (flat list, one entry per person).
         inter_graph = batch.get("inter_graph", None)
-        if isinstance(inter_graph, dict) and "in_text" in inter_graph and "in" in inter_graph:
-            in_text = inter_graph.get("in_text")
-            g_in = inter_graph.get("in")
-            if isinstance(in_text, list) and isinstance(g_in, list) and len(in_text) == len(g_in):
+        if isinstance(inter_graph, dict) and "person_text" in inter_graph:
+            person_text = inter_graph.get("person_text")
+            if isinstance(person_text, list) and len(person_text) > 0:
                 flat_texts = []
-                edge_slices = []  # (j, k, flat_index)
-                for j in range(len(g_in)):
-                    if not isinstance(g_in[j], list):
-                        continue
-                    if not isinstance(in_text[j], list):
-                        continue
-                    # Keep strict alignment: in_text[j][k] describes edge (in[j][k] -> j)
-                    for k in range(min(len(g_in[j]), len(in_text[j]))):
-                        s = in_text[j][k]
-                        if isinstance(s, str) and s.strip():
-                            edge_slices.append((j, k, len(flat_texts)))
-                            # Use full prompt + edge-specific text (requested behavior) to stabilize motion.
-                            # If prompt is empty, fall back to edge text only.
-                            s_clean = s.strip()
-                            flat_texts.append((scene_prompt + " " + s_clean).strip() if scene_prompt else s_clean)
-                        else:
-                            edge_slices.append((j, k, None))
+                valid_indices = []  # person indices with valid text
+                for j, s in enumerate(person_text):
+                    if isinstance(s, str) and s.strip():
+                        s_clean = s.strip()
+                        # Combine scene prompt with person-specific action description.
+                        flat_texts.append((scene_prompt + " " + s_clean).strip() if scene_prompt else s_clean)
+                        valid_indices.append(j)
 
                 if flat_texts:
                     with torch.no_grad():
@@ -124,20 +113,15 @@ class InterGen(nn.Module):
                         eclip_out = self.ln_final(ex).type(self.dtype)
                         eout = self.clipTransEncoder(eclip_out)
                         eout = self.clip_ln(eout)
-                        econd = eout[torch.arange(ex.shape[0]), et.argmax(dim=-1)]  # (E, 768)
+                        econd = eout[torch.arange(ex.shape[0]), et.argmax(dim=-1)]  # (P_valid, 768)
 
-                    in_cond = []
-                    for j in range(len(g_in)):
-                        if isinstance(g_in[j], list):
-                            in_cond.append([None for _ in range(len(g_in[j]))])
-                        else:
-                            in_cond.append([])
-                    for (j, k, fi) in edge_slices:
-                        if fi is None:
-                            continue
+                    # Build person_cond: flat list indexed by person j.
+                    # None means "no per-person text, fall back to global cond".
+                    person_cond = [None] * len(person_text)
+                    for fi, j in enumerate(valid_indices):
                         # Keep shape (1, 768) for CFGSingleModel (B=1).
-                        in_cond[j][k] = econd[fi : fi + 1]
+                        person_cond[j] = econd[fi : fi + 1]
 
-                    inter_graph["in_cond"] = in_cond
+                    inter_graph["person_cond"] = person_cond
 
         return batch
