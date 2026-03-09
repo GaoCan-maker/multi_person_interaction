@@ -4,7 +4,8 @@ tools/eval_with_llm.py
 
 Comprehensive multi-person motion evaluation — four metrics in one pass:
 
-  1. PeneBone  — bone-level penetration depth (PyBullet, radius 2 cm)
+  1. PeneBone  — total bone-level penetration depth summed over all person pairs,
+                 all frames, and all bone pairs (PyBullet, radius 2 cm).
                  Lower is better (fewer collisions).
 
   2. APD       — Average Pairwise Distance (intra-scene action diversity)
@@ -151,13 +152,13 @@ Please evaluate and return JSON.\
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-#  1. PeneBone  — bone-level collision depth
+#  1. PeneBone  — total bone-level collision depth (sum over all pairs, frames, bones)
 # ─────────────────────────────────────────────────────────────────────────────
 
 def compute_penebone(joints_all: np.ndarray) -> float:
     """
     joints_all: (person_num, T, 22, 3)
-    Returns mean per-frame per-pair collision depth (metres).
+    Returns total collision depth summed over all person pairs, all frames, and all bone pairs (metres).
     Lower is better.
     """
     person_num, T = joints_all.shape[:2]
@@ -167,7 +168,7 @@ def compute_penebone(joints_all: np.ndarray) -> float:
         detector = CollisionDepth(joints_all[i], joints_all[j])
         total_depth += abs(detector.check_depth())
         num_pairs += 1
-    return total_depth / (num_pairs * T) if num_pairs > 0 else 0.0
+    return total_depth if num_pairs > 0 else 0.0
 
 
 # ─────────────────────────────────────────────────────────────────────────────

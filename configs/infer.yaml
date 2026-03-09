@@ -26,7 +26,7 @@ PROMPTS:
 # If disabled, falls back to the static INTER_GRAPH below.
 LLM:
   ENABLED: true
-  BASE_URL: https://api.deepbricks.ai/v1/
+  BASE_URL: https://api.agicto.cn/v1
   API_KEY_ENV: OPENAI_API_KEY
   MODEL: gpt-4o-mini
   TEMPERATURE: 0.2
